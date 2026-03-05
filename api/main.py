@@ -6,10 +6,11 @@ from pydantic import BaseModel
 import sqlite3
 import os
 
-app = FastAPI(title="Cerebro Local AI API", version="2.1")
+from .ai_utils import summarize_content, suggest_tags
 
-# Habilitar el servicio de archivos estáticos para visualizar fotos y documentos
-# Asegurarse de que las rutas existen
+app = FastAPI(title="Cerebro Local AI API", version="2.2")
+
+# Habilitar el servicio de archivos estáticos
 if not os.path.exists("fotos_locales"): os.makedirs("fotos_locales")
 if not os.path.exists("documentos_locales"): os.makedirs("documentos_locales")
 
@@ -22,10 +23,13 @@ class RecursoUpdate(BaseModel):
     etiqueta: Optional[str] = None
     favorito: Optional[bool] = None
 
-# Permitir CORS para el frontend (Vite/React usualmente corre en 5173 o 3000)
+class AIRequest(BaseModel):
+    text: str
+
+# Permitir CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # En producción, esto debería restringirse
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -246,6 +250,19 @@ def delete_recurso(item_id: int):
         if isinstance(e, HTTPException):
             raise e
         raise HTTPException(status_code=500, detail=str(e))
+
+# Endpoints de IA
+@app.post("/api/ai/summarize")
+async def ai_summarize(request: AIRequest):
+    """Genera un resumen del texto enviado"""
+    summary = await summarize_content(request.text)
+    return {"summary": summary}
+
+@app.post("/api/ai/suggest_tags")
+async def ai_suggest_tags(request: AIRequest):
+    """Sugiere etiquetas para el contenido"""
+    tags = await suggest_tags(request.text)
+    return {"tags": tags}
 
 if __name__ == "__main__":
     import uvicorn

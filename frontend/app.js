@@ -26,6 +26,10 @@ const App = () => {
     const [previewItem, setPreviewItem] = useState(null);
     const [showTaxonomy, setShowTaxonomy] = useState(false);
 
+    // AI States
+    const [aiLoading, setAiLoading] = useState(false);
+    const [aiResult, setAiResult] = useState("");
+
     useEffect(() => {
         fetchStats();
     }, []);
@@ -100,6 +104,48 @@ const App = () => {
                 fetchRecursos();
             }
         } catch (err) { console.error(err); }
+    };
+
+    const handleSummarize = async (text) => {
+        setAiLoading(true);
+        setAiResult("");
+        try {
+            const res = await fetch(`${API_BASE}/ai/summarize`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            const data = await res.json();
+            setAiResult(data.summary);
+        } catch (err) {
+            setAiResult("Error: No se pudo conectar con el servicio de IA.");
+        } finally {
+            setAiLoading(false);
+        }
+    };
+
+    const handleSuggestTags = async (text) => {
+        setAiLoading(true);
+        try {
+            const res = await fetch(`${API_BASE}/ai/suggest_tags`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            const data = await res.json();
+            if (data.tags) {
+                const currentTags = editingItem.etiqueta && editingItem.etiqueta !== "SinEtiqueta" ? editingItem.etiqueta : "";
+                const newTags = data.tags.join(", ");
+                setEditingItem({
+                    ...editingItem,
+                    etiqueta: currentTags ? `${currentTags}, ${newTags}` : newTags
+                });
+            }
+        } catch (err) {
+            alert("Error consultando sugerencias de etiquetas.");
+        } finally {
+            setAiLoading(false);
+        }
     };
 
     const formatDate = (dateString) => {
@@ -205,10 +251,10 @@ const App = () => {
                     <h3>Rango de Fechas</h3>
                     <div className="date-inputs">
                         <label>Desde:</label>
-                        <input type="date" className="filter-btn" style={{ margin: 0 }} value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(0); }} />
+                        <input type="date" className="filter-btn" style={{ margin: 0 }} value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(Page); }} />
 
                         <label style={{ marginTop: '0.5rem' }}>Hasta:</label>
-                        <input type="date" className="filter-btn" style={{ margin: 0 }} value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(0); }} />
+                        <input type="date" className="filter-btn" style={{ margin: 0 }} value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(Page); }} />
                     </div>
                 </div>
 
@@ -276,7 +322,7 @@ const App = () => {
                                         <div className="card-date">{formatDate(r.fecha)}</div>
                                     </div>
 
-                                    <div className="card-content" onClick={() => setPreviewItem(r)} style={{ cursor: 'pointer' }} title="Clic para ampliar">
+                                    <div className="card-content" onClick={() => { setPreviewItem(r); setAiResult(""); }} style={{ cursor: 'pointer' }} title="Clic para ampliar">
                                         {renderContent(r, false)}
                                     </div>
 
@@ -330,7 +376,12 @@ const App = () => {
                                 <textarea rows="6" value={editingItem.contenido} onChange={e => setEditingItem({ ...editingItem, contenido: e.target.value })} />
                             </div>
                             <div className="form-group">
-                                <label>Etiquetas (separadas por coma)</label>
+                                <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    Etiquetas (separadas por coma)
+                                    <button type="button" className="btn-ai" style={{ fontSize: '0.75rem' }} onClick={() => handleSuggestTags(editingItem.contenido)} disabled={aiLoading}>
+                                        {aiLoading ? <span className="ai-loading">⌛</span> : '✨ Sugerir Etiquetas'}
+                                    </button>
+                                </label>
                                 <input type="text" value={editingItem.etiqueta} onChange={e => setEditingItem({ ...editingItem, etiqueta: e.target.value })} placeholder="Ej: ProyectoX, Idea, Referencia" />
                             </div>
                             <div className="btn-group">
@@ -348,9 +399,19 @@ const App = () => {
                     <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '900px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
                         <div className="card-header" style={{ marginBottom: '1rem', position: 'sticky', top: 0, background: 'var(--card-bg)', zIndex: 10, padding: '1rem 0', margin: '-1rem 0 1rem 0' }}>
                             <h2 style={{ margin: 0 }}>📖 Vista Detallada</h2>
-                            <button className="btn-icon" onClick={() => setPreviewItem(null)}>❌</button>
+                            <div style={{ display: 'flex', gap: '1rem' }}>
+                                <button className="btn-ai" onClick={() => handleSummarize(previewItem.contenido)} disabled={aiLoading}>
+                                    {aiLoading ? <span className="ai-loading">⌛</span> : '✨ Resumir con IA'}
+                                </button>
+                                <button className="btn-icon" onClick={() => setPreviewItem(null)}>❌</button>
+                            </div>
                         </div>
                         <div className="full-text-preview" style={{ maxHeight: 'none', paddingRight: '1rem' }}>
+                            {aiResult && (
+                                <div className="ai-result-box">
+                                    <strong>🤖 Resumen IA:</strong> {aiResult}
+                                </div>
+                            )}
                             <div style={{ marginBottom: '1rem' }}>{renderMedia(previewItem, true)}</div>
                             <div style={{ fontSize: '1.1rem', lineHeight: '1.6' }}>
                                 {renderContent(previewItem, true)}
