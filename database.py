@@ -2,6 +2,9 @@ import sqlite3
 import os
 import shutil
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class CerebroDB:
@@ -258,10 +261,10 @@ class CerebroDB:
             
             # Limpiar backups viejos (mantener solo los 5 más recientes)
             self.limpiar_backups_viejos(backups_dir)
+            logger.info(f"Backup generado exitosamente: {nombre_backup}")
             
         except Exception as e:
-            # Silencioso para no interrumpir el programa
-            pass
+            logger.error(f"Error generando backup de base de datos: {str(e)}", exc_info=True)
     
     def limpiar_backups_viejos(self, backups_dir):
         """Mantiene solo los 5 backups más recientes y elimina los más viejos"""
@@ -282,12 +285,12 @@ class CerebroDB:
                 for archivo, _ in archivos_backup[5:]:
                     try:
                         os.remove(archivo)
-                    except:
-                        pass  # Silencioso si no se puede eliminar
+                        logger.info(f"Backup antiguo eliminado: {archivo}")
+                    except Exception as e:
+                        logger.warning(f"No se pudo eliminar backup antiguo '{archivo}': {str(e)}")
                         
-        except Exception:
-            # Silencioso para no interrumpir el programa
-            pass
+        except Exception as e:
+            logger.error(f"Error limpiando backups viejos: {str(e)}", exc_info=True)
 
 # Para probar la base de datos
 if __name__ == "__main__":
@@ -300,7 +303,7 @@ if __name__ == "__main__":
     
     # Mostrar estadísticas
     stats = db.obtener_estadisticas()
-    print("\nEstadísticas:")
-    print(f"Total de datos: {stats['total']}")
-    print(f"Por tipo: {stats['por_tipo']}")
-    print(f"Por etiqueta: {stats['por_etiqueta']}")
+    logger.info("Estadísticas:")
+    logger.info(f"Total de datos: {stats['total']}")
+    logger.info(f"Por tipo: {stats['por_tipo']}")
+    logger.info(f"Por etiqueta: {stats['por_etiqueta']}")

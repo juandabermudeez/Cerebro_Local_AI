@@ -6,6 +6,21 @@ import re
 from datetime import datetime
 import urllib.request
 import uuid
+import logging
+
+# Configurar el sistema de logging
+if not os.path.exists('logs'):
+    os.makedirs('logs')
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("logs/bot.log", encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Cargar variables de entorno
 load_dotenv()
@@ -14,9 +29,8 @@ load_dotenv()
 TOKEN = os.getenv('TELEGRAM_TOKEN')
 
 if not TOKEN or TOKEN == 'AQUI_VA_TU_TOKEN':
-    print("❌ ERROR: Debes configurar tu token en el archivo .env")
-    print("1. Abre el archivo .env")
-    print("2. Reemplaza 'AQUI_VA_TU_TOKEN' con tu token real de @BotFather")
+    logger.error("Token no configurado en el archivo .env")
+    logger.info("Por favor, asegúrate de reemplazar 'AQUI_VA_TU_TOKEN' con tu token real de @BotFather")
     exit()
 
 # Inicializar el bot
@@ -50,7 +64,7 @@ def descargar_y_guardar_foto(file_id, caption=""):
         
         return filepath
     except Exception as e:
-        print(f"Error descargando foto: {e}")
+        logger.error(f"Error descargando foto: {str(e)}", exc_info=True)
         return None
 
 def descargar_y_guardar_documento(file_id, filename_original, caption=""):
@@ -69,7 +83,7 @@ def descargar_y_guardar_documento(file_id, filename_original, caption=""):
         
         return filepath
     except Exception as e:
-        print(f"Error descargando documento: {e}")
+        logger.error(f"Error descargando documento '{filename_original}': {str(e)}", exc_info=True)
         return None
 def es_url(texto):
     """Verifica si un texto es una URL"""
@@ -204,82 +218,45 @@ def comando_ultimos(mensaje):
 @bot.message_handler(content_types=['text'])
 def manejar_texto(mensaje):
     """Maneja mensajes de texto (links o notas) con extracción inteligente de etiquetas"""
-    contenido_original = mensaje.text
-    
-    # Extraer etiquetas usando la Taxonomía de 3 Niveles
-    etiquetas = extraer_etiquetas(contenido_original)
-    
-    # Limpiar el contenido quitando todos los hashtags
-    contenido_limpio = limpiar_contenido(contenido_original)
-    
-    # Determinar si es un link o texto
-    if es_url(contenido_limpio):
-        db.guardar_dato("link", contenido_limpio, etiquetas)
-        respuesta = f"✅ *Link guardado* 🔗\n\n{contenido_limpio}"
-        if etiquetas != "SinEtiqueta":
-            respuesta += f"\n🏷️ Etiquetas: #{etiquetas.replace(', ', ' #')}"
+    try:
+        contenido_original = mensaje.text
+        
+        # Extraer etiquetas usando la Taxonomía de 3 Niveles
+        etiquetas = extraer_etiquetas(contenido_original)
+        
+        # Limpiar el contenido quitando todos los hashtags
+        contenido_limpio = limpiar_contenido(contenido_original)
+        
+        # Determinar si es un link o texto
+        if es_url(contenido_limpio):
+            db.guardar_dato("link", contenido_limpio, etiquetas)
+            respuesta = f"✅ *Link guardado* 🔗\n\n{contenido_limpio}"
+            if etiquetas != "SinEtiqueta":
+                respuesta += f"\n🏷️ Etiquetas: #{etiquetas.replace(', ', ' #')}"
+            else:
+                respuesta += f"\n🏷️ {etiquetas}"
         else:
-            respuesta += f"\n🏷️ {etiquetas}"
-    else:
-        db.guardar_dato("texto", contenido_limpio, etiquetas)
-        respuesta = f"✅ *Texto guardado* 📝\n\n\"{contenido_limpio}\""
-        if etiquetas != "SinEtiqueta":
-            respuesta += f"\n🏷️ Etiquetas: #{etiquetas.replace(', ', ' #')}"
-        else:
-            respuesta += f"\n🏷️ {etiquetas}"
-    
-    bot.reply_to(mensaje, respuesta, parse_mode='Markdown')
+            db.guardar_dato("texto", contenido_limpio, etiquetas)
+            respuesta = f"✅ *Texto guardado* 📝\n\n\"{contenido_limpio}\""
+            if etiquetas != "SinEtiqueta":
+                respuesta += f"\n🏷️ Etiquetas: #{etiquetas.replace(', ', ' #')}"
+            else:
+                respuesta += f"\n🏷️ {etiquetas}"
+        
+        bot.reply_to(mensaje, respuesta, parse_mode='Markdown')
+        logger.info(f"Mensaje de texto procesado. Etiquetas: {etiquetas}")
+        
+    except Exception as e:
+        logger.error(f"Error procesando mensaje de texto: {str(e)}", exc_info=True)
+        bot.reply_to(mensaje, "❌ Ocurrió un error al procesar tu mensaje. Intenta de nuevo.", parse_mode='Markdown')
 
 @bot.message_handler(content_types=['photo'])
 def manejar_foto(mensaje):
     """Maneja fotos descargándolas físicamente"""
-    # Obtener la foto de mayor resolución
-    foto_info = mensaje.photo[-1]
-    file_id = foto_info.file_id
-    
-    # Extraer etiquetas del caption si existe
-    if mensaje.caption:
-        etiquetas = extraer_etiquetas(mensaje.caption)
-        # Limpiar hashtags del caption para obtener el comentario
-        comentario = limpiar_contenido(mensaje.caption)
-    else:
-        etiquetas = "SinEtiqueta"
-        comentario = ""
-    
-    # Descargar y guardar la foto físicamente
-    filepath = descargar_y_guardar_foto(file_id, mensaje.caption)
-    
-    if filepath:
-        # Guardar comentario y ruta con formato: "comentario\nArchivo: ruta"
-        if comentario:
-            contenido_completo = f"{comentario}\nArchivo: {filepath}"
-        else:
-            contenido_completo = f"Archivo: {filepath}"
-        
-        db.guardar_dato("foto", contenido_completo, etiquetas)
-        
-        # Mensaje de confirmación en HTML
-        respuesta = f"🖼️ <b>¡Imagen guardada con éxito!</b>"
-        if comentario:
-            respuesta += f"\n\n💬 {comentario}"
-        respuesta += f"\n📁 Ruta: {filepath}"
-        if etiquetas != "SinEtiqueta":
-            respuesta += f"\n🏷️ Etiquetas: #{etiquetas.replace(', ', ' #')}"
-        else:
-            respuesta += f"\n🏷️ {etiquetas}"
-    else:
-        respuesta = "❌ Error al guardar la imagen. Intenta de nuevo."
-    
-    bot.reply_to(mensaje, respuesta, parse_mode='HTML')
-
-@bot.message_handler(content_types=['document'])
-def manejar_documento(mensaje):
-    """Maneja documentos, especialmente imágenes y PDFs"""
-    filename = mensaje.document.file_name
-    
-    # Verificar si es una imagen
-    if es_documento_imagen(filename):
-        file_id = mensaje.document.file_id
+    try:
+        # Obtener la foto de mayor resolución
+        foto_info = mensaje.photo[-1]
+        file_id = foto_info.file_id
         
         # Extraer etiquetas del caption si existe
         if mensaje.caption:
@@ -290,7 +267,7 @@ def manejar_documento(mensaje):
             etiquetas = "SinEtiqueta"
             comentario = ""
         
-        # Descargar y guardar la imagen
+        # Descargar y guardar la foto físicamente
         filepath = descargar_y_guardar_foto(file_id, mensaje.caption)
         
         if filepath:
@@ -303,7 +280,7 @@ def manejar_documento(mensaje):
             db.guardar_dato("foto", contenido_completo, etiquetas)
             
             # Mensaje de confirmación en HTML
-            respuesta = f"🖼️ <b>¡Imagen (documento) guardada con éxito!</b>"
+            respuesta = f"🖼️ <b>¡Imagen guardada con éxito!</b>"
             if comentario:
                 respuesta += f"\n\n💬 {comentario}"
             respuesta += f"\n📁 Ruta: {filepath}"
@@ -311,50 +288,111 @@ def manejar_documento(mensaje):
                 respuesta += f"\n🏷️ Etiquetas: #{etiquetas.replace(', ', ' #')}"
             else:
                 respuesta += f"\n🏷️ {etiquetas}"
+            
+            logger.info(f"Foto procesada y guardada. Etiquetas: {etiquetas}")
         else:
             respuesta = "❌ Error al guardar la imagen. Intenta de nuevo."
-    
-    # Verificar si es un PDF
-    elif es_documento_pdf(filename):
-        file_id = mensaje.document.file_id
+            logger.warning("Fallo la descarga de la foto en manejar_foto")
         
-        # Extraer etiquetas del caption si existe
-        if mensaje.caption:
-            etiquetas = extraer_etiquetas(mensaje.caption)
-            # Limpiar hashtags del caption para obtener el comentario
-            comentario = limpiar_contenido(mensaje.caption)
-        else:
-            etiquetas = "SinEtiqueta"
-            comentario = ""
+        bot.reply_to(mensaje, respuesta, parse_mode='HTML')
         
-        # Descargar y guardar el PDF
-        filepath = descargar_y_guardar_documento(file_id, filename, mensaje.caption)
+    except Exception as e:
+        logger.error(f"Error procesando foto: {str(e)}", exc_info=True)
+        bot.reply_to(mensaje, "❌ Ocurrió un error inesperado al guardar la foto.", parse_mode='HTML')
+
+@bot.message_handler(content_types=['document'])
+def manejar_documento(mensaje):
+    """Maneja documentos, especialmente imágenes y PDFs"""
+    try:
+        filename = mensaje.document.file_name
         
-        if filepath:
-            # Guardar comentario y ruta con formato: "comentario\nArchivo: ruta"
-            if comentario:
-                contenido_completo = f"{comentario}\nArchivo: {filepath}"
-            else:
-                contenido_completo = f"Archivo: {filepath}"
+        # Verificar si es una imagen
+        if es_documento_imagen(filename):
+            file_id = mensaje.document.file_id
             
-            db.guardar_dato("pdf", contenido_completo, etiquetas)
-            
-            # Mensaje de confirmación en HTML
-            respuesta = f"📄 <b>¡PDF guardado con éxito!</b>"
-            if comentario:
-                respuesta += f"\n\n💬 {comentario}"
-            respuesta += f"\n📁 Ruta: {filepath}"
-            if etiquetas != "SinEtiqueta":
-                respuesta += f"\n🏷️ Etiquetas: #{etiquetas.replace(', ', ' #')}"
+            # Extraer etiquetas del caption si existe
+            if mensaje.caption:
+                etiquetas = extraer_etiquetas(mensaje.caption)
+                # Limpiar hashtags del caption para obtener el comentario
+                comentario = limpiar_contenido(mensaje.caption)
             else:
-                respuesta += f"\n🏷️ {etiquetas}"
+                etiquetas = "SinEtiqueta"
+                comentario = ""
+            
+            # Descargar y guardar la imagen
+            filepath = descargar_y_guardar_foto(file_id, mensaje.caption)
+            
+            if filepath:
+                # Guardar comentario y ruta con formato: "comentario\nArchivo: ruta"
+                if comentario:
+                    contenido_completo = f"{comentario}\nArchivo: {filepath}"
+                else:
+                    contenido_completo = f"Archivo: {filepath}"
+                
+                db.guardar_dato("foto", contenido_completo, etiquetas)
+                
+                # Mensaje de confirmación en HTML
+                respuesta = f"🖼️ <b>¡Imagen (documento) guardada con éxito!</b>"
+                if comentario:
+                    respuesta += f"\n\n💬 {comentario}"
+                respuesta += f"\n📁 Ruta: {filepath}"
+                if etiquetas != "SinEtiqueta":
+                    respuesta += f"\n🏷️ Etiquetas: #{etiquetas.replace(', ', ' #')}"
+                else:
+                    respuesta += f"\n🏷️ {etiquetas}"
+                logger.info(f"Documento imagen procesado y guardado. Etiquetas: {etiquetas}")
+            else:
+                respuesta = "❌ Error al guardar la imagen. Intenta de nuevo."
+                logger.warning(f"Fallo la descarga de la imagen documento '{filename}'")
+        
+        # Verificar si es un PDF
+        elif es_documento_pdf(filename):
+            file_id = mensaje.document.file_id
+            
+            # Extraer etiquetas del caption si existe
+            if mensaje.caption:
+                etiquetas = extraer_etiquetas(mensaje.caption)
+                # Limpiar hashtags del caption para obtener el comentario
+                comentario = limpiar_contenido(mensaje.caption)
+            else:
+                etiquetas = "SinEtiqueta"
+                comentario = ""
+            
+            # Descargar y guardar el PDF
+            filepath = descargar_y_guardar_documento(file_id, filename, mensaje.caption)
+            
+            if filepath:
+                # Guardar comentario y ruta con formato: "comentario\nArchivo: ruta"
+                if comentario:
+                    contenido_completo = f"{comentario}\nArchivo: {filepath}"
+                else:
+                    contenido_completo = f"Archivo: {filepath}"
+                
+                db.guardar_dato("pdf", contenido_completo, etiquetas)
+                
+                # Mensaje de confirmación en HTML
+                respuesta = f"📄 <b>¡PDF guardado con éxito!</b>"
+                if comentario:
+                    respuesta += f"\n\n💬 {comentario}"
+                respuesta += f"\n📁 Ruta: {filepath}"
+                if etiquetas != "SinEtiqueta":
+                    respuesta += f"\n🏷️ Etiquetas: #{etiquetas.replace(', ', ' #')}"
+                else:
+                    respuesta += f"\n🏷️ {etiquetas}"
+                logger.info(f"PDF procesado y guardado. Etiquetas: {etiquetas}")
+            else:
+                respuesta = "❌ Error al guardar el PDF. Intenta de nuevo."
+                logger.warning(f"Fallo la descarga del documento PDF '{filename}'")
+        
         else:
-            respuesta = "❌ Error al guardar el PDF. Intenta de nuevo."
-    
-    else:
-        respuesta = f"❓ El archivo '{filename}' no es compatible. Solo acepto: JPG, PNG, GIF, WebP y PDF"
-    
-    bot.reply_to(mensaje, respuesta, parse_mode='HTML')
+            respuesta = f"❓ El archivo '{filename}' no es compatible. Solo acepto: JPG, PNG, GIF, WebP y PDF"
+            logger.info(f"Intento de subida de archivo no compatible: {filename}")
+        
+        bot.reply_to(mensaje, respuesta, parse_mode='HTML')
+        
+    except Exception as e:
+        logger.error(f"Error procesando documento: {str(e)}", exc_info=True)
+        bot.reply_to(mensaje, "❌ Ocurrió un error inesperado al procesar el documento.", parse_mode='HTML')
 
 @bot.message_handler(func=lambda message: True)
 def manejar_otros(mensaje):
@@ -363,12 +401,15 @@ def manejar_otros(mensaje):
 
 def main():
     """Función principal para iniciar el bot"""
-    print("🚀 Iniciando Mi Cerebro AI Bot...")
-    print(f"📱 Bot conectado con token: {TOKEN[:10]}...")
-    print("📡 Esperando mensajes...")
+    logger.info("Iniciando Mi Cerebro AI Bot...")
+    logger.info(f"Bot conectado con token: {TOKEN[:10]}...")
+    logger.info("Esperando mensajes...")
     
-    # Iniciar el bot
-    bot.polling(none_stop=True)
+    try:
+        # Iniciar el bot
+        bot.polling(none_stop=True)
+    except Exception as e:
+        logger.critical(f"Error fatal en el bot: {str(e)}", exc_info=True)
 
 if __name__ == "__main__":
     main()
