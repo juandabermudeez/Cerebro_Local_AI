@@ -6,9 +6,13 @@ from pydantic import BaseModel
 import sqlite3
 import os
 
-from .ai_utils import summarize_content, suggest_tags
+from .ai_utils import (
+    summarize_content, suggest_tags, check_ai_status,
+    semantic_search, generate_weekly_digest, chat_with_notes,
+    bulk_auto_tag
+)
 
-app = FastAPI(title="Cerebro Local AI API", version="2.2")
+app = FastAPI(title="Cerebro Local AI API", version="3.0")
 
 # Habilitar el servicio de archivos estáticos
 if not os.path.exists("fotos_locales"): os.makedirs("fotos_locales")
@@ -251,7 +255,12 @@ def delete_recurso(item_id: int):
             raise e
         raise HTTPException(status_code=500, detail=str(e))
 
-# Endpoints de IA
+# ─── Endpoints de IA ──────────────────────────────────
+@app.get("/api/ai/status")
+async def ai_status():
+    """Verifica el estado de los motores de IA"""
+    return await check_ai_status()
+
 @app.post("/api/ai/summarize")
 async def ai_summarize(request: AIRequest):
     """Genera un resumen del texto enviado"""
@@ -264,8 +273,39 @@ async def ai_suggest_tags(request: AIRequest):
     tags = await suggest_tags(request.text)
     return {"tags": tags}
 
+@app.post("/api/ai/search")
+async def ai_search(request: AIRequest):
+    """Búsqueda semántica por significado"""
+    ids = await semantic_search(request.text)
+    if not ids:
+        return {"items": [], "total": 0}
+    # Fetch full resources for matched IDs
+    conn = get_db_connection()
+    placeholders = ",".join("?" * len(ids))
+    cursor = conn.cursor()
+    cursor.execute(f"SELECT * FROM datos WHERE id IN ({placeholders})", ids)
+    items = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return {"items": items, "total": len(items)}
+
+@app.get("/api/ai/digest")
+async def ai_digest():
+    """Genera un resumen semanal de los recursos"""
+    digest = await generate_weekly_digest()
+    return {"digest": digest}
+
+@app.post("/api/ai/chat")
+async def ai_chat(request: AIRequest):
+    """Chat con las notas del usuario (RAG simplificado)"""
+    answer = await chat_with_notes(request.text)
+    return {"answer": answer}
+
+@app.post("/api/ai/bulk_tag")
+async def ai_bulk_tag():
+    """Etiqueta automáticamente todos los recursos sin etiqueta"""
+    results = await bulk_auto_tag()
+    return results
+
 if __name__ == "__main__":
     import uvicorn
-    # Para pruebas locales puedes correr el script directamente
-    # Python intentará buscar la db en el padre temporalmente
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

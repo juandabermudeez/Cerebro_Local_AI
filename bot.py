@@ -7,6 +7,7 @@ from datetime import datetime
 import urllib.request
 import uuid
 import logging
+import requests
 
 # Configurar el sistema de logging
 if not os.path.exists('logs'):
@@ -46,6 +47,20 @@ if not os.path.exists(FOTOS_DIR):
     os.makedirs(FOTOS_DIR)
 if not os.path.exists(DOCS_DIR):
     os.makedirs(DOCS_DIR)
+
+AI_API_URL = "http://localhost:8000/api/ai/suggest_tags"
+
+def auto_tag_with_ai(text):
+    """Consulta la API de IA para sugerir etiquetas cuando el usuario no puso hashtags."""
+    try:
+        response = requests.post(AI_API_URL, json={"text": text}, timeout=15)
+        if response.status_code == 200:
+            tags = response.json().get("tags", [])
+            if tags:
+                return ", ".join(tags)
+    except Exception as e:
+        logger.warning(f"Auto-tag IA no disponible: {e}")
+    return "SinEtiqueta"
 
 def descargar_y_guardar_foto(file_id, caption=""):
     """Descarga una foto de Telegram y la guarda localmente"""
@@ -227,24 +242,30 @@ def manejar_texto(mensaje):
         # Limpiar el contenido quitando todos los hashtags
         contenido_limpio = limpiar_contenido(contenido_original)
         
+        # Si no hay hashtags, intentar auto-etiquetar con IA
+        ai_tagged = False
+        if etiquetas == "SinEtiqueta":
+            etiquetas_ia = auto_tag_with_ai(contenido_limpio)
+            if etiquetas_ia != "SinEtiqueta":
+                etiquetas = etiquetas_ia
+                ai_tagged = True
+        
         # Determinar si es un link o texto
         if es_url(contenido_limpio):
             db.guardar_dato("link", contenido_limpio, etiquetas)
             respuesta = f"✅ *Link guardado* 🔗\n\n{contenido_limpio}"
-            if etiquetas != "SinEtiqueta":
-                respuesta += f"\n🏷️ Etiquetas: #{etiquetas.replace(', ', ' #')}"
-            else:
-                respuesta += f"\n🏷️ {etiquetas}"
         else:
             db.guardar_dato("texto", contenido_limpio, etiquetas)
             respuesta = f"✅ *Texto guardado* 📝\n\n\"{contenido_limpio}\""
-            if etiquetas != "SinEtiqueta":
-                respuesta += f"\n🏷️ Etiquetas: #{etiquetas.replace(', ', ' #')}"
-            else:
-                respuesta += f"\n🏷️ {etiquetas}"
+        
+        if etiquetas != "SinEtiqueta":
+            tag_prefix = "🤖 IA sugiere" if ai_tagged else "🏷️ Etiquetas"
+            respuesta += f"\n{tag_prefix}: #{etiquetas.replace(', ', ' #')}"
+        else:
+            respuesta += f"\n🏷️ {etiquetas}"
         
         bot.reply_to(mensaje, respuesta, parse_mode='Markdown')
-        logger.info(f"Mensaje de texto procesado. Etiquetas: {etiquetas}")
+        logger.info(f"Texto procesado. Etiquetas: {etiquetas} (AI: {ai_tagged})")
         
     except Exception as e:
         logger.error(f"Error procesando mensaje de texto: {str(e)}", exc_info=True)
